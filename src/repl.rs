@@ -7,6 +7,14 @@ use std::io::{self, Write};
 
 use crate::ui;
 
+const COMMANDS: &[(&str, &str)] = &[
+    ("/clear", "Clear the screen (Ctrl+L)"),
+    ("/exit", "Exit (also: /quit, Ctrl+C x2)"),
+    ("/help", "Show this help message"),
+    ("/quit", "Quit the app"),
+    ("/version", "Show version"),
+];
+
 struct RawModeGuard;
 
 impl Drop for RawModeGuard {
@@ -19,6 +27,11 @@ pub struct Repl {
     input: String,
     ctrl_c_pending: bool,
     width: usize,
+    suggestions: Vec<usize>,
+    selected: Option<usize>,
+    history: Vec<String>,
+    history_index: Option<usize>,
+    saved_input: String,
 }
 
 impl Repl {
@@ -28,6 +41,11 @@ impl Repl {
             input: String::new(),
             ctrl_c_pending: false,
             width: w as usize,
+            suggestions: Vec::new(),
+            selected: None,
+            history: Vec::new(),
+            history_index: None,
+            saved_input: String::new(),
         }
     }
 
@@ -36,7 +54,7 @@ impl Repl {
         let _guard = RawModeGuard;
 
         ui::draw_header(self.width);
-        ui::draw_input_box(&self.input, self.width);
+        ui::draw_input_box(&self.input, &[], None, self.width);
 
         loop {
             let ev = match event::read() {
@@ -54,22 +72,49 @@ impl Repl {
                 }
                 Event::Resize(w, _) => {
                     self.width = w as usize;
+                    self.suggestions.clear();
+                    self.selected = None;
                     ui::clear_screen();
                     ui::draw_header(self.width);
-                    ui::draw_input_box(&self.input, self.width);
+                    ui::draw_input_box(&self.input, &[], None, self.width);
                 }
                 _ => {}
             }
         }
     }
 
+    fn suggestion_items(&self) -> Vec<(&str, &str)> {
+        self.suggestions.iter().map(|&i| COMMANDS[i]).collect()
+    }
+
+    fn update_suggestions(&mut self) {
+        if self.input.starts_with('/') {
+            self.suggestions = COMMANDS
+                .iter()
+                .enumerate()
+                .filter(|(_, (name, _))| name.starts_with(self.input.as_str()))
+                .map(|(i, _)| i)
+                .take(3)
+                .collect();
+            // Hide when input exactly matches the only result
+            if self.suggestions.len() == 1 && COMMANDS[self.suggestions[0]].0 == self.input {
+                self.suggestions.clear();
+            }
+        } else {
+            self.suggestions.clear();
+        }
+        self.selected = None;
+    }
+
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> bool {
         // Ctrl+L — clear & redraw
         if code == KeyCode::Char('l') && modifiers.contains(KeyModifiers::CONTROL) {
             self.ctrl_c_pending = false;
+            self.suggestions.clear();
+            self.selected = None;
             ui::clear_screen();
             ui::draw_header(self.width);
-            ui::draw_input_box(&self.input, self.width);
+            ui::draw_input_box(&self.input, &[], None, self.width);
             return true;
         }
 
@@ -81,11 +126,13 @@ impl Repl {
             }
             self.ctrl_c_pending = true;
             self.input.clear();
+            self.suggestions.clear();
+            self.selected = None;
             ui::erase_input_box();
             let m = " ".repeat(ui::MARGIN);
             print!("{m}  {}\r\n\r\n", "Press Ctrl+C again to quit".dim());
             io::stdout().flush().unwrap();
-            ui::draw_input_box(&self.input, self.width);
+            ui::draw_input_box(&self.input, &[], None, self.width);
             return true;
         }
 
@@ -93,29 +140,121 @@ impl Repl {
 
         match code {
             KeyCode::Enter => {
+                if let Some(i) = self.selected {
+                    // Accept suggestion into input without executing
+                    self.input = COMMANDS[self.suggestions[i]].0.to_string();
+                    self.suggestions.clear();
+                    self.selected = None;
+                    ui::redraw_input_area(&self.input, &[], None, self.width);
+                    return true;
+                }
+
                 let cmd = self.input.trim().to_string();
                 self.input.clear();
+                self.suggestions.clear();
+                self.selected = None;
+                self.history_index = None;
+                self.saved_input.clear();
 
                 if cmd.is_empty() {
-                    ui::redraw_content_line(&self.input, self.width);
+                    ui::redraw_input_area(&self.input, &[], None, self.width);
                     return true;
+                }
+
+                // Add to history (avoid consecutive duplicates)
+                if self.history.last().map_or(true, |last| last != &cmd) {
+                    self.history.push(cmd.clone());
                 }
 
                 ui::erase_input_box();
                 self.exec_command(&cmd);
-                ui::draw_input_box(&self.input, self.width);
+                ui::draw_input_box(&self.input, &[], None, self.width);
             }
             KeyCode::Backspace => {
                 if !self.input.is_empty() {
                     self.input.pop();
-                    ui::redraw_content_line(&self.input, self.width);
+                    self.history_index = None;
+                    self.saved_input.clear();
+                    self.update_suggestions();
+                    let items = self.suggestion_items();
+                    ui::redraw_input_area(&self.input, &items, self.selected, self.width);
+                }
+            }
+            KeyCode::Tab => {
+                if !self.suggestions.is_empty() {
+                    let idx = self.selected.unwrap_or(0);
+                    self.input = COMMANDS[self.suggestions[idx]].0.to_string();
+                    self.suggestions.clear();
+                    self.selected = None;
+                    ui::redraw_input_area(&self.input, &[], None, self.width);
+                }
+            }
+            KeyCode::Down => {
+                if !self.suggestions.is_empty() {
+                    self.selected = Some(match self.selected {
+                        None => 0,
+                        Some(i) => (i + 1).min(self.suggestions.len() - 1),
+                    });
+                    let items = self.suggestion_items();
+                    ui::redraw_input_area(&self.input, &items, self.selected, self.width);
+                } else if self.history_index.is_some() {
+                    // Navigate forward in history
+                    let idx = self.history_index.unwrap();
+                    if idx + 1 < self.history.len() {
+                        self.history_index = Some(idx + 1);
+                        self.input = self.history[idx + 1].clone();
+                    } else {
+                        // Back to saved input
+                        self.history_index = None;
+                        self.input = self.saved_input.clone();
+                        self.saved_input.clear();
+                    }
+                    self.update_suggestions();
+                    let items = self.suggestion_items();
+                    ui::redraw_input_area(&self.input, &items, self.selected, self.width);
+                }
+            }
+            KeyCode::Up => {
+                if !self.suggestions.is_empty() {
+                    self.selected = match self.selected {
+                        None | Some(0) => None,
+                        Some(i) => Some(i - 1),
+                    };
+                    let items = self.suggestion_items();
+                    ui::redraw_input_area(&self.input, &items, self.selected, self.width);
+                } else if !self.history.is_empty() {
+                    // Navigate backward in history
+                    let new_idx = match self.history_index {
+                        None => {
+                            self.saved_input = self.input.clone();
+                            self.history.len() - 1
+                        }
+                        Some(0) => 0,
+                        Some(i) => i - 1,
+                    };
+                    self.history_index = Some(new_idx);
+                    self.input = self.history[new_idx].clone();
+                    self.update_suggestions();
+                    let items = self.suggestion_items();
+                    ui::redraw_input_area(&self.input, &items, self.selected, self.width);
+                }
+            }
+            KeyCode::Esc => {
+                if !self.suggestions.is_empty() {
+                    self.suggestions.clear();
+                    self.selected = None;
+                    ui::redraw_input_area(&self.input, &[], None, self.width);
                 }
             }
             KeyCode::Char(c)
                 if modifiers.is_empty() || modifiers == KeyModifiers::SHIFT =>
             {
                 self.input.push(c);
-                ui::redraw_content_line(&self.input, self.width);
+                self.history_index = None;
+                self.saved_input.clear();
+                self.update_suggestions();
+                let items = self.suggestion_items();
+                ui::redraw_input_area(&self.input, &items, self.selected, self.width);
             }
             _ => {}
         }
@@ -140,13 +279,7 @@ impl Repl {
         match cmd {
             "help" => {
                 print!("{m}  {}\r\n\r\n", "Available commands:".bold());
-                let cmds: &[(&str, &str)] = &[
-                    ("/help", "Show this help message"),
-                    ("/version", "Show version"),
-                    ("/clear", "Clear the screen (Ctrl+L)"),
-                    ("/exit", "Exit (also: /quit, Ctrl+C x2)"),
-                ];
-                for (name, desc) in cmds {
+                for (name, desc) in COMMANDS {
                     let pad = 12_usize.saturating_sub(name.len());
                     print!("{m}    {}{}{}\r\n", name.cyan(), " ".repeat(pad), desc.dim());
                 }

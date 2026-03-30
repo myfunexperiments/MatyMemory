@@ -62,11 +62,35 @@ pub fn draw_header(term_width: usize) {
     io::stdout().flush().unwrap();
 }
 
-pub fn draw_input_box(input: &str, term_width: usize) {
+fn render_suggestion_line(name: &str, desc: &str, is_selected: bool, term_width: usize) {
+    let m = margin();
+    let cw = content_width(term_width);
+    let name_len = name.chars().count();
+    let min_gap = 2;
+    let desc_budget = cw.saturating_sub(name_len + min_gap);
+    let desc_display: String = desc.chars().take(desc_budget).collect();
+    let desc_len = desc_display.chars().count();
+    let gap = cw.saturating_sub(name_len + desc_len);
+
+    if is_selected {
+        let line = format!("{}{}{}", name, " ".repeat(gap), desc_display);
+        print!("{m}  {}", line.on_dark_cyan().white());
+    } else {
+        print!("{m}  {}{}{}", name.cyan(), " ".repeat(gap), desc_display.dim());
+    }
+}
+
+fn render_box_and_suggestions(
+    input: &str,
+    suggestions: &[(&str, &str)],
+    selected: Option<usize>,
+    term_width: usize,
+) {
     let m = margin();
     let bw = box_width(term_width);
     let cw = content_width(term_width);
 
+    // Top border
     let dash_count = bw.saturating_sub(7);
     let top_rest = format!(" {}╮", "─".repeat(dash_count));
     print!(
@@ -76,6 +100,7 @@ pub fn draw_input_box(input: &str, term_width: usize) {
         top_rest.as_str().dark_grey()
     );
 
+    // Content line
     let display = display_input(input, term_width);
     let dlen = display.chars().count();
     let padding = cw.saturating_sub(dlen);
@@ -87,32 +112,49 @@ pub fn draw_input_box(input: &str, term_width: usize) {
         "│".dark_grey()
     );
 
+    // Bottom border (no trailing \r\n)
     let bottom = format!("╰{}╯", "─".repeat(bw.saturating_sub(2)));
     print!("{m}{}", bottom.as_str().dark_grey());
 
+    // Suggestion lines
+    if !suggestions.is_empty() {
+        for (i, (name, desc)) in suggestions.iter().enumerate() {
+            print!("\r\n");
+            render_suggestion_line(name, desc, selected == Some(i), term_width);
+        }
+    }
+
+    // Move cursor back to content line
+    let lines_below = if suggestions.is_empty() { 1 } else { 1 + suggestions.len() as u16 };
     let col = (MARGIN + 2 + dlen) as u16;
-    execute!(io::stdout(), cursor::MoveUp(1), cursor::MoveToColumn(col)).unwrap();
+    execute!(io::stdout(), cursor::MoveUp(lines_below), cursor::MoveToColumn(col)).unwrap();
     io::stdout().flush().unwrap();
 }
 
-pub fn redraw_content_line(input: &str, term_width: usize) {
-    let m = margin();
-    let cw = content_width(term_width);
-    let display = display_input(input, term_width);
-    let dlen = display.chars().count();
-    let padding = cw.saturating_sub(dlen);
+pub fn draw_input_box(
+    input: &str,
+    suggestions: &[(&str, &str)],
+    selected: Option<usize>,
+    term_width: usize,
+) {
+    render_box_and_suggestions(input, suggestions, selected, term_width);
+}
 
-    print!(
-        "\r{m}{} {}{} {}",
-        "│".dark_grey(),
-        display,
-        " ".repeat(padding),
-        "│".dark_grey()
-    );
-
-    let col = (MARGIN + 2 + dlen) as u16;
-    execute!(io::stdout(), cursor::MoveToColumn(col)).unwrap();
-    io::stdout().flush().unwrap();
+pub fn redraw_input_area(
+    input: &str,
+    suggestions: &[(&str, &str)],
+    selected: Option<usize>,
+    term_width: usize,
+) {
+    // Cursor is on content line; move to top border and clear everything below
+    execute!(
+        io::stdout(),
+        cursor::MoveUp(1),
+        cursor::MoveToColumn(0),
+        terminal::Clear(ClearType::FromCursorDown),
+    )
+    .unwrap();
+    render_box_and_suggestions(input, suggestions, selected, term_width);
 }
 
 pub fn erase_input_box() {
