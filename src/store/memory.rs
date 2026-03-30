@@ -3,7 +3,8 @@ use uuid::Uuid;
 
 use super::error::{MatyError, Result};
 use super::models::{
-    CreateMemoryRequest, Memory, MemoryStats, MemoryWithTags, SearchFilters, Update,
+    CreateMemoryRequest, Memory, MemoryStats, MemoryType, MemoryWithTags, Provenance,
+    SearchFilters, Update,
 };
 use super::queries;
 use super::Store;
@@ -130,6 +131,57 @@ impl Store {
         Ok(stats)
     }
 
+    pub fn delete_memory(&self, id: &str) -> Result<()> {
+        // Clear supersedes_id references pointing to this memory first
+        self.conn.execute(
+            "UPDATE memories SET supersedes_id = NULL WHERE supersedes_id = ?1",
+            rusqlite::params![id],
+        )?;
+        let rows = self
+            .conn
+            .execute(queries::DELETE_MEMORY, rusqlite::params![id])?;
+        if rows == 0 {
+            return Err(MatyError::NotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    pub fn change_type(&self, id: &str, new_type: MemoryType) -> Result<Memory> {
+        let now = now_rfc3339();
+        let rows = self.conn.execute(
+            queries::UPDATE_MEMORY_TYPE,
+            rusqlite::params![id, new_type.to_string(), now],
+        )?;
+        if rows == 0 {
+            return Err(MatyError::NotFound(id.to_string()));
+        }
+        self.row_to_memory(id)
+    }
+
+    pub fn get_provenance(&self, memory_id: &str) -> Result<Provenance> {
+        let result = self.conn.query_row(
+            queries::SELECT_PROVENANCE,
+            [memory_id],
+            |row| {
+                Ok(Provenance {
+                    id: row.get(0)?,
+                    memory_id: row.get(1)?,
+                    actor: row.get(2)?,
+                    session_id: row.get(3)?,
+                    model_id: row.get(4)?,
+                    write_reason: row.get(5)?,
+                })
+            },
+        );
+        match result {
+            Ok(p) => Ok(p),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                Err(MatyError::NotFound(memory_id.to_string()))
+            }
+            Err(e) => Err(MatyError::Db(e)),
+        }
+    }
+
     pub(super) fn row_to_memory(&self, id: &str) -> Result<Memory> {
         let result = self.conn.query_row(queries::SELECT_MEMORY_BY_ID, [id], |row| {
             Ok(parse_memory_row(row))
@@ -158,7 +210,7 @@ fn parse_memory_row(row: &rusqlite::Row<'_>) -> Result<Memory> {
             .map_err(|e| MatyError::InvalidInput(format!("Bad timestamp: {e}")))
     };
     let parse_opt_ts = |s: Option<String>| -> Result<Option<chrono::DateTime<Utc>>> {
-        s.map(|s| parse_ts(s)).transpose()
+        s.map(&parse_ts).transpose()
     };
 
     Ok(Memory {

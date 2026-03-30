@@ -382,6 +382,60 @@ mod tests {
         assert_eq!(stats.by_status["active"], 3);
     }
 
+    // -- Delete tests --
+
+    #[test]
+    fn delete_memory_removes_it() {
+        let s = store();
+        let created = s.create_memory(sample_request("to delete")).unwrap();
+        s.delete_memory(&created.memory.id).unwrap();
+        let err = s.get_memory(&created.memory.id);
+        assert!(matches!(err, Err(super::error::MatyError::NotFound(_))));
+    }
+
+    #[test]
+    fn delete_nonexistent_returns_not_found() {
+        let s = store();
+        let err = s.delete_memory("nonexistent");
+        assert!(matches!(err, Err(super::error::MatyError::NotFound(_))));
+    }
+
+    // -- Change type tests --
+
+    #[test]
+    fn change_type_updates_memory() {
+        let s = store();
+        let created = s.create_memory(sample_request("typed")).unwrap();
+        assert_eq!(created.memory.memory_type, MemoryType::Semantic);
+        let updated = s.change_type(&created.memory.id, MemoryType::Episodic).unwrap();
+        assert_eq!(updated.memory_type, MemoryType::Episodic);
+    }
+
+    #[test]
+    fn change_type_nonexistent_returns_not_found() {
+        let s = store();
+        let err = s.change_type("nonexistent", MemoryType::Episodic);
+        assert!(matches!(err, Err(super::error::MatyError::NotFound(_))));
+    }
+
+    // -- Provenance tests --
+
+    #[test]
+    fn get_provenance_returns_actor() {
+        let s = store();
+        let created = s.create_memory(sample_request("with provenance")).unwrap();
+        let prov = s.get_provenance(&created.memory.id).unwrap();
+        assert_eq!(prov.actor, "test-user");
+        assert_eq!(prov.write_reason.as_deref(), Some("unit test"));
+    }
+
+    #[test]
+    fn get_provenance_nonexistent_returns_not_found() {
+        let s = store();
+        let err = s.get_provenance("nonexistent");
+        assert!(matches!(err, Err(super::error::MatyError::NotFound(_))));
+    }
+
     // -- File persistence test --
 
     #[test]

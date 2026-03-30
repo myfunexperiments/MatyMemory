@@ -26,6 +26,12 @@ pub const UPDATE_MEMORY_ACCESS: &str = "\
 pub const SELECT_MEMORY_STATUS: &str = "\
     SELECT status FROM memories WHERE id = ?1";
 
+pub const DELETE_MEMORY: &str = "\
+    DELETE FROM memories WHERE id = ?1";
+
+pub const UPDATE_MEMORY_TYPE: &str = "\
+    UPDATE memories SET memory_type = ?2, updated_at = ?3 WHERE id = ?1";
+
 // ---------------------------------------------------------------------------
 // Provenance
 // ---------------------------------------------------------------------------
@@ -33,6 +39,10 @@ pub const SELECT_MEMORY_STATUS: &str = "\
 pub const INSERT_PROVENANCE: &str = "\
     INSERT INTO provenance (memory_id, actor, session_id, model_id, write_reason) \
     VALUES (?1, ?2, ?3, ?4, ?5)";
+
+pub const SELECT_PROVENANCE: &str = "\
+    SELECT id, memory_id, actor, session_id, model_id, write_reason \
+    FROM provenance WHERE memory_id = ?1";
 
 // ---------------------------------------------------------------------------
 // Tags

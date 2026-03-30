@@ -9,7 +9,8 @@ use super::error::MatyError;
 // Enums
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MemoryType {
     Pinned,
     Semantic,
@@ -47,7 +48,8 @@ impl FromStr for MemoryType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MemoryStatus {
     Active,
     Archived,
@@ -86,24 +88,19 @@ impl FromStr for MemoryStatus {
 // Three-state update wrapper
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum Update<T> {
+    #[default]
     Unchanged,
     Set(T),
     Null,
-}
-
-impl<T> Default for Update<T> {
-    fn default() -> Self {
-        Self::Unchanged
-    }
 }
 
 // ---------------------------------------------------------------------------
 // Core structs
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Memory {
     pub id: String,
     pub content: String,
@@ -120,7 +117,7 @@ pub struct Memory {
     pub access_count: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct MemoryWithTags {
     pub memory: Memory,
     pub tags: Vec<String>,
@@ -155,7 +152,7 @@ pub struct MemoryUpdate {
 // Supporting structs
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Provenance {
     pub id: i64,
     pub memory_id: String,
@@ -165,7 +162,7 @@ pub struct Provenance {
     pub write_reason: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Relation {
     pub from_id: String,
     pub to_id: String,
@@ -190,7 +187,7 @@ pub struct Scope {
     pub write_scope: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize)]
 pub struct MemoryStats {
     pub total: usize,
     pub by_type: HashMap<String, usize>,
