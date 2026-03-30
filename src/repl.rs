@@ -7,6 +7,14 @@ use std::io::{self, Write};
 
 use crate::ui;
 
+struct RawModeGuard;
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = terminal::disable_raw_mode();
+    }
+}
+
 pub struct Repl {
     input: String,
     ctrl_c_pending: bool,
@@ -25,6 +33,8 @@ impl Repl {
 
     pub fn run(&mut self) {
         terminal::enable_raw_mode().unwrap();
+        let _guard = RawModeGuard;
+
         ui::draw_header(self.width);
         ui::draw_input_box(&self.input, self.width);
 
@@ -44,12 +54,13 @@ impl Repl {
                 }
                 Event::Resize(w, _) => {
                     self.width = w as usize;
+                    ui::clear_screen();
+                    ui::draw_header(self.width);
+                    ui::draw_input_box(&self.input, self.width);
                 }
                 _ => {}
             }
         }
-
-        terminal::disable_raw_mode().unwrap();
     }
 
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> bool {
@@ -100,7 +111,9 @@ impl Repl {
                     ui::redraw_content_line(&self.input, self.width);
                 }
             }
-            KeyCode::Char(c) => {
+            KeyCode::Char(c)
+                if modifiers.is_empty() || modifiers == KeyModifiers::SHIFT =>
+            {
                 self.input.push(c);
                 ui::redraw_content_line(&self.input, self.width);
             }

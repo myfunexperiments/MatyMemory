@@ -29,8 +29,11 @@ fn content_width(term_width: usize) -> usize {
 
 pub fn display_input(input: &str, term_width: usize) -> &str {
     let cw = content_width(term_width);
-    if input.len() > cw {
-        &input[input.len() - cw..]
+    let char_count = input.chars().count();
+    if char_count > cw {
+        let skip = char_count - cw;
+        let byte_idx = input.char_indices().nth(skip).map(|(i, _)| i).unwrap_or(0);
+        &input[byte_idx..]
     } else {
         input
     }
@@ -74,7 +77,8 @@ pub fn draw_input_box(input: &str, term_width: usize) {
     );
 
     let display = display_input(input, term_width);
-    let padding = cw.saturating_sub(display.len());
+    let dlen = display.chars().count();
+    let padding = cw.saturating_sub(dlen);
     print!(
         "{m}{} {}{} {}\r\n",
         "│".dark_grey(),
@@ -86,7 +90,7 @@ pub fn draw_input_box(input: &str, term_width: usize) {
     let bottom = format!("╰{}╯", "─".repeat(bw.saturating_sub(2)));
     print!("{m}{}", bottom.as_str().dark_grey());
 
-    let col = (MARGIN + 2 + display.len()) as u16;
+    let col = (MARGIN + 2 + dlen) as u16;
     execute!(io::stdout(), cursor::MoveUp(1), cursor::MoveToColumn(col)).unwrap();
     io::stdout().flush().unwrap();
 }
@@ -95,7 +99,8 @@ pub fn redraw_content_line(input: &str, term_width: usize) {
     let m = margin();
     let cw = content_width(term_width);
     let display = display_input(input, term_width);
-    let padding = cw.saturating_sub(display.len());
+    let dlen = display.chars().count();
+    let padding = cw.saturating_sub(dlen);
 
     print!(
         "\r{m}{} {}{} {}",
@@ -105,7 +110,7 @@ pub fn redraw_content_line(input: &str, term_width: usize) {
         "│".dark_grey()
     );
 
-    let col = (MARGIN + 2 + display.len()) as u16;
+    let col = (MARGIN + 2 + dlen) as u16;
     execute!(io::stdout(), cursor::MoveToColumn(col)).unwrap();
     io::stdout().flush().unwrap();
 }
