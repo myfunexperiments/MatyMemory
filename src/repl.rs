@@ -23,12 +23,15 @@ impl Drop for RawModeGuard {
     }
 }
 
+const MAX_VISIBLE: usize = 3;
+
 pub struct Repl {
     input: String,
     ctrl_c_pending: bool,
     width: usize,
     suggestions: Vec<usize>,
     selected: Option<usize>,
+    scroll_offset: usize,
     history: Vec<String>,
     history_index: Option<usize>,
     saved_input: String,
@@ -43,6 +46,7 @@ impl Repl {
             width: w as usize,
             suggestions: Vec::new(),
             selected: None,
+            scroll_offset: 0,
             history: Vec::new(),
             history_index: None,
             saved_input: String::new(),
@@ -74,6 +78,7 @@ impl Repl {
                     self.width = w as usize;
                     self.suggestions.clear();
                     self.selected = None;
+                    self.scroll_offset = 0;
                     ui::clear_screen();
                     ui::draw_header(self.width);
                     ui::draw_input_box(&self.input, &[], None, self.width);
@@ -83,8 +88,16 @@ impl Repl {
         }
     }
 
-    fn suggestion_items(&self) -> Vec<(&str, &str)> {
-        self.suggestions.iter().map(|&i| COMMANDS[i]).collect()
+    fn visible_suggestions(&self) -> Vec<(&str, &str)> {
+        let end = (self.scroll_offset + MAX_VISIBLE).min(self.suggestions.len());
+        self.suggestions[self.scroll_offset..end]
+            .iter()
+            .map(|&i| COMMANDS[i])
+            .collect()
+    }
+
+    fn visible_selected(&self) -> Option<usize> {
+        self.selected.map(|s| s - self.scroll_offset)
     }
 
     fn update_suggestions(&mut self) {
@@ -94,7 +107,6 @@ impl Repl {
                 .enumerate()
                 .filter(|(_, (name, _))| name.starts_with(self.input.as_str()))
                 .map(|(i, _)| i)
-                .take(3)
                 .collect();
             // Hide when input exactly matches the only result
             if self.suggestions.len() == 1 && COMMANDS[self.suggestions[0]].0 == self.input {
@@ -104,6 +116,7 @@ impl Repl {
             self.suggestions.clear();
         }
         self.selected = None;
+        self.scroll_offset = 0;
     }
 
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> bool {
@@ -112,6 +125,7 @@ impl Repl {
             self.ctrl_c_pending = false;
             self.suggestions.clear();
             self.selected = None;
+            self.scroll_offset = 0;
             ui::clear_screen();
             ui::draw_header(self.width);
             ui::draw_input_box(&self.input, &[], None, self.width);
@@ -128,6 +142,7 @@ impl Repl {
             self.input.clear();
             self.suggestions.clear();
             self.selected = None;
+            self.scroll_offset = 0;
             ui::erase_input_box();
             let m = " ".repeat(ui::MARGIN);
             print!("{m}  {}\r\n\r\n", "Press Ctrl+C again to quit".dim());
@@ -145,6 +160,7 @@ impl Repl {
                     self.input = COMMANDS[self.suggestions[i]].0.to_string();
                     self.suggestions.clear();
                     self.selected = None;
+                    self.scroll_offset = 0;
                     ui::redraw_input_area(&self.input, &[], None, self.width);
                     return true;
                 }
@@ -153,6 +169,7 @@ impl Repl {
                 self.input.clear();
                 self.suggestions.clear();
                 self.selected = None;
+                self.scroll_offset = 0;
                 self.history_index = None;
                 self.saved_input.clear();
 
@@ -176,8 +193,8 @@ impl Repl {
                     self.history_index = None;
                     self.saved_input.clear();
                     self.update_suggestions();
-                    let items = self.suggestion_items();
-                    ui::redraw_input_area(&self.input, &items, self.selected, self.width);
+                    let items = self.visible_suggestions();
+                    ui::redraw_input_area(&self.input, &items, self.visible_selected(), self.width);
                 }
             }
             KeyCode::Tab => {
@@ -186,17 +203,23 @@ impl Repl {
                     self.input = COMMANDS[self.suggestions[idx]].0.to_string();
                     self.suggestions.clear();
                     self.selected = None;
+                    self.scroll_offset = 0;
                     ui::redraw_input_area(&self.input, &[], None, self.width);
                 }
             }
             KeyCode::Down => {
                 if !self.suggestions.is_empty() {
-                    self.selected = Some(match self.selected {
+                    let new_sel = match self.selected {
                         None => 0,
                         Some(i) => (i + 1).min(self.suggestions.len() - 1),
-                    });
-                    let items = self.suggestion_items();
-                    ui::redraw_input_area(&self.input, &items, self.selected, self.width);
+                    };
+                    self.selected = Some(new_sel);
+                    // Scroll down if selected goes past visible window
+                    if new_sel >= self.scroll_offset + MAX_VISIBLE {
+                        self.scroll_offset = new_sel + 1 - MAX_VISIBLE;
+                    }
+                    let items = self.visible_suggestions();
+                    ui::redraw_input_area(&self.input, &items, self.visible_selected(), self.width);
                 } else if self.history_index.is_some() {
                     // Navigate forward in history
                     let idx = self.history_index.unwrap();
@@ -210,8 +233,8 @@ impl Repl {
                         self.saved_input.clear();
                     }
                     self.update_suggestions();
-                    let items = self.suggestion_items();
-                    ui::redraw_input_area(&self.input, &items, self.selected, self.width);
+                    let items = self.visible_suggestions();
+                    ui::redraw_input_area(&self.input, &items, self.visible_selected(), self.width);
                 }
             }
             KeyCode::Up => {
@@ -220,8 +243,14 @@ impl Repl {
                         None | Some(0) => None,
                         Some(i) => Some(i - 1),
                     };
-                    let items = self.suggestion_items();
-                    ui::redraw_input_area(&self.input, &items, self.selected, self.width);
+                    // Scroll up if selected goes above visible window
+                    if let Some(s) = self.selected {
+                        if s < self.scroll_offset {
+                            self.scroll_offset = s;
+                        }
+                    }
+                    let items = self.visible_suggestions();
+                    ui::redraw_input_area(&self.input, &items, self.visible_selected(), self.width);
                 } else if !self.history.is_empty() {
                     // Navigate backward in history
                     let new_idx = match self.history_index {
@@ -235,14 +264,15 @@ impl Repl {
                     self.history_index = Some(new_idx);
                     self.input = self.history[new_idx].clone();
                     self.update_suggestions();
-                    let items = self.suggestion_items();
-                    ui::redraw_input_area(&self.input, &items, self.selected, self.width);
+                    let items = self.visible_suggestions();
+                    ui::redraw_input_area(&self.input, &items, self.visible_selected(), self.width);
                 }
             }
             KeyCode::Esc => {
                 if !self.suggestions.is_empty() {
                     self.suggestions.clear();
                     self.selected = None;
+                    self.scroll_offset = 0;
                     ui::redraw_input_area(&self.input, &[], None, self.width);
                 }
             }
@@ -253,8 +283,8 @@ impl Repl {
                 self.history_index = None;
                 self.saved_input.clear();
                 self.update_suggestions();
-                let items = self.suggestion_items();
-                ui::redraw_input_area(&self.input, &items, self.selected, self.width);
+                let items = self.visible_suggestions();
+                ui::redraw_input_area(&self.input, &items, self.visible_selected(), self.width);
             }
             _ => {}
         }
