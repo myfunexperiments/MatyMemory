@@ -1,8 +1,15 @@
 [package]
 name = "MatyMemory"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
+rusqlite = { version = "0.39", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

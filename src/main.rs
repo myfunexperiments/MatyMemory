@@ -1,4 +1,5 @@
 mod repl;
+mod store;
 mod ui;
 
 use clap::Parser;

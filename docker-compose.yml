@@ -1,0 +1,12 @@
+services:
+  matymemory:
+    build: .
+    stdin_open: true
+    tty: true
+    volumes:
+      - maty-data:/data
+    environment:
+      - MATY_DB_PATH=/data/memory.db
+
+volumes:
+  maty-data:
